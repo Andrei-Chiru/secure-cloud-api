@@ -1,0 +1,180 @@
+openapi: 3.0.3
+info:
+  title: Embed & Search API
+  version: 1.1.0
+servers:
+  - url: http://localhost:8000  # UI/docs assume local dev; adjust in prod.
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      # Simple header-based API key auth
+      type: apiKey
+      in: header
+      name: X-API-Key
+      # Connexion hook to validate token
+      x-apikeyInfoFunc: app.security.check_api_key
+
+  schemas:
+    # Request schema to create a collection
+    CreateCollectionRequest:
+      type: object
+      required: [name]
+      properties:
+        name:        { type: string }
+        description: { type: string }
+
+    # Request schema to upsert items into a collection
+    UpsertItemsRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [id, text]
+            properties:
+              id:       { type: string }
+              text:     { type: string }
+              metadata: { type: object, additionalProperties: true }
+
+    # Request schema for search
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        top_k: { type: integer, default: 5, minimum: 1, maximum: 50 }
+
+paths:
+  # Healthcheck for k8s/compose and quick smoke tests
+  /healthz:
+    get:
+      operationId: app.handlers.collections.healthz
+      responses:
+        "200": { description: OK }
+
+  # -------- Collections CRUD --------
+  /collections:
+    get:
+      # List collections (id, name, description)
+      operationId: app.handlers.collections.list_collections
+      security: [ { ApiKeyAuth: [] } ]
+      responses:
+        "200": { description: OK }
+    post:
+      # Create a new collection
+      operationId: app.handlers.collections.create_collection
+      security: [ { ApiKeyAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateCollectionRequest" }
+      responses:
+        "201": { description: Created }
+        "409": { description: Exists }
+
+  /collections/{cid}:
+    get:
+      # Fetch a single collection by name or id
+      operationId: app.handlers.collections.get_collection
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: OK }
+        "404": { description: Not Found }
+    delete:
+      # Delete a collection and its items
+      operationId: app.handlers.collections.delete_collection
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not Found }
+
+  /collections/{cid}/items:
+    get:
+      # Paginated list of items in a collection
+      operationId: app.handlers.collections.list_items
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 50, minimum: 1, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
+      responses:
+        "200": { description: OK }
+        "404": { description: Not Found }
+
+  /collections/{cid}/items/{item_id}:
+    delete:
+      # Delete a single item from a collection
+      operationId: app.handlers.collections.delete_item
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+        - in: path
+          name: item_id
+          required: true
+          schema: { type: string }
+      responses:
+        "204": { description: Deleted }
+        "404": { description: Not Found }
+
+  # -------- Indexing & Search --------
+  /collections/{cid}/index:
+    post:
+      # Upsert an array of items (id, text, metadata) and compute embeddings
+      operationId: app.handlers.collections.upsert_items
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpsertItemsRequest" }
+      responses:
+        "200": { description: Indexed }
+        "404": { description: Not Found }
+
+  /collections/{cid}/search:
+    post:
+      # Semantic search against a collection using pgvector ANN
+      operationId: app.handlers.search.search
+      security: [ { ApiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: cid
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SearchRequest" }
+      responses:
+        "200": { description: Results }
+        "404": { description: Not Found }

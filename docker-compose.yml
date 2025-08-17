@@ -1,0 +1,35 @@
+# Compose v2 (no "version" key required). Defines a Postgres+pgvector DB and the API.
+services:
+  db:
+    # Official pgvector image based on PostgreSQL 16; includes the "vector" extension.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    # Expose Postgres on the host for debugging with psql / GUI tools.
+    ports:
+      - "5432:5432"
+    # Healthcheck ensures the DB is ready before API tries to connect/migrate.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  api:
+    # Build the API image using the Dockerfile in this directory.
+    build: .
+    # Map container port 8000 (Gunicorn) to localhost:8000
+    ports:
+      - "8000:8000"
+    # App config via env vars; API_KEY used by our header auth; DATABASE_URL used by SQLAlchemy.
+    environment:
+      API_KEY: dev-key
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/postgres
+    # Wait for DB health before starting
+    depends_on:
+      db:
+        condition: service_healthy
+    # Run Gunicorn with 2 workers. "--preload" imports the app once (runs init_db() one time), then forks.
+    command: gunicorn -w 2 --preload -b 0.0.0.0:8000 app.main:app

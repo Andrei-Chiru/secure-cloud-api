@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Embed & Search — Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Night-mode styling -->
+  <style>
+    :root{--bg:#0b0f14;--panel:#141a22;--text:#e5eef8;--muted:#93a2b7;--border:#1f2a36;--accent:#4da3ff;--accent-2:#2d75c9;--ok:#4cd964;--input:#0f1621;--code:#0d1420}
+    *{box-sizing:border-box} html,body{height:100%}
+    body{margin:24px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--text);background:radial-gradient(1200px 800px at 10% -10%,#0f1724 0%,var(--bg) 45%) no-repeat fixed;max-width:980px}
+    nav{margin-bottom:16px}
+    nav a{color:var(--text);opacity:.9;text-decoration:none;margin-right:14px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(180deg,#1a2230,#121824)}
+    nav a:hover{opacity:1;border-color:#2a3950}
+    h1{margin:0 0 8px;font-size:26px}
+    code{background:var(--code);color:var(--text);padding:2px 6px;border-radius:6px}
+    fieldset{border:1px solid var(--border);background:linear-gradient(180deg,#121a27,#0e1520);padding:16px;margin:12px 0;border-radius:12px}
+    legend{padding:0 6px;color:var(--muted)}
+    label{display:block;margin:8px 0 6px;font-size:13px;color:var(--muted)}
+    input,select{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--input);color:var(--text);outline:none}
+    input:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #4da3ff33}
+    button{padding:10px 14px;border-radius:10px;border:1px solid #2a3b54;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;cursor:pointer;font-weight:600}
+    button:hover{filter:brightness(1.05)}
+    .row{display:flex;gap:12px;align-items:center}.row>*{flex:1}
+    .muted{color:var(--muted);font-size:12px;margin-top:8px}
+    #results>div{padding:12px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;background:linear-gradient(180deg,#121a27,#0e1520)}
+    .score{color:var(--ok)}
+  </style>
+</head>
+<body>
+  <!-- Simple navigation -->
+  <nav>
+    <a href="/">Search</a>
+    <a href="/collections.html">Manage collections</a>
+    <a href="/ui" target="_blank">Swagger UI</a>
+  </nav>
+
+  <h1>Embed & Search</h1>
+  <div class="muted">Backend: <code id="base"></code></div>
+
+  <!-- Settings: API key and collection selector -->
+  <fieldset>
+    <legend>Settings</legend>
+    <div class="row">
+      <div>
+        <label>API Key (X-API-Key)</label>
+        <input id="key" value="dev-key" />
+      </div>
+      <div>
+        <label>Collection</label>
+        <div class="row">
+          <select id="cid"></select>
+          <button type="button" onclick="loadSearchCollections()">Load collections</button>
+        </div>
+      </div>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button onclick="health()">Check /healthz</button>
+      <button onclick="createCollection()">Create collection</button>
+      <button onclick="seed()">Seed demo items</button>
+      <button onclick="seedBig()">Seed bigger demo</button>
+    </div>
+    <div id="status" class="muted"></div>
+  </fieldset>
+
+  <!-- Search panel -->
+  <fieldset>
+    <legend>Search</legend>
+    <label>Query</label>
+    <input id="q" value="French capital city" />
+    <label style="margin-top:8px">Top K</label>
+    <select id="k"><option>3</option><option>5</option><option>10</option></select>
+    <div style="margin-top:12px"><button onclick="run()">Search</button></div>
+  </fieldset>
+
+  <h3 style="margin-top:18px">Results</h3>
+  <div id="results" class="muted">No results yet.</div>
+
+  <script>
+    // Base URL derived from current origin; avoids CORS.
+    const BASE = window.location.origin;
+    document.getElementById('base').textContent = BASE;
+
+    // Construct headers including the API key from the input field.
+    function headers() {
+      return { "Content-Type":"application/json", "X-API-Key": document.getElementById('key').value.trim() };
+    }
+
+    // GET /healthz just to confirm the server responds.
+    async function health() {
+      const r = await fetch(`${BASE}/healthz`);
+      setStatus(`/healthz → ${r.status}`);
+    }
+
+    // Create a collection whose name matches the currently selected/typed option.
+    async function createCollection() {
+      const sel = document.getElementById('cid');
+      const name = sel.value || "demo";
+      const r = await fetch(`${BASE}/collections`, {
+        method: "POST", headers: headers(),
+        body: JSON.stringify({ name, description: "demo collection" })
+      });
+      setStatus(`POST /collections → ${r.status}`);
+      await loadSearchCollections();
+    }
+
+    // Tiny 3-item demo to prove end-to-end behavior.
+    async function seed() {
+      const cid = document.getElementById('cid').value || "demo";
+      const items = [
+        { id: "1", text: "Paris is the capital of France", metadata: { tag: "geo" } },
+        { id: "2", text: "The Eiffel Tower is in Paris", metadata: { tag: "landmark" } },
+        { id: "3", text: "Tokyo is the capital of Japan", metadata: { tag: "geo" } },
+      ];
+      const r = await fetch(`${BASE}/collections/${encodeURIComponent(cid)}/index`, {
+        method: "POST", headers: headers(),
+        body: JSON.stringify({ items })
+      });
+      setStatus(`POST /collections/${cid}/index → ${r.status}`);
+    }
+
+    // Bigger, more realistic dataset across multiple collections.
+    async function seedBig(){
+      const key = headers();
+      const post = async (url, body) => {
+        const r = await fetch(url, { method: "POST", headers: key, body: JSON.stringify(body) });
+        if (!r.ok) throw new Error(`${url} → ${r.status} ${await r.text()}`);
+        return r;
+      };
+
+      // Create collections (ignore 409 conflicts if they exist)
+      await post(`${BASE}/collections`, {name:"kb-ml", description:"Machine learning notes"}).catch(()=>{});
+      await post(`${BASE}/collections`, {name:"kb-cloud", description:"Cloud architecture notes"}).catch(()=>{});
+      await post(`${BASE}/collections`, {name:"kb-python", description:"Python tips"}).catch(()=>{});
+
+      // Seed items for each
+      await post(`${BASE}/collections/kb-ml/index`, { items: [
+        {"id":"ml-01","text":"Cross-entropy loss measures the distance between the true distribution and the predicted probabilities. For binary classification it's equivalent to logistic loss. It strongly penalizes confident wrong predictions.","metadata":{"topic":"metrics","level":"intro"}},
+        {"id":"ml-02","text":"Batch normalization normalizes layer activations using batch statistics, then applies learned scale and shift. It stabilizes training by making the optimization landscape smoother and allows higher learning rates.","metadata":{"topic":"optimization","level":"intermediate"}},
+        {"id":"ml-03","text":"Adam combines momentum with RMSProp-style adaptive learning rates. It maintains first and second moment estimates of gradients and works well on sparse, noisy problems. Decoupled weight decay (AdamW) improves generalization.","metadata":{"topic":"optimizers","level":"intermediate"}},
+        {"id":"ml-04","text":"Area Under the ROC Curve (AUROC) summarizes the tradeoff between true positive rate and false positive rate across thresholds. It is threshold-independent but can be misleading with heavy class imbalance.","metadata":{"topic":"metrics","level":"intro"}},
+        {"id":"ml-05","text":"Byte Pair Encoding (BPE) merges frequent adjacent symbol pairs to form a subword vocabulary. It handles open vocabulary problems by representing rare words as multiple subword tokens, improving robustness.","metadata":{"topic":"nlp","level":"intro"}},
+        {"id":"ml-06","text":"Transformer self-attention computes attention weights between every pair of tokens within a sequence, enabling long-range dependency modeling. Multi-head attention captures diverse relations in parallel.","metadata":{"topic":"transformers","level":"intermediate"}},
+        {"id":"ml-07","text":"Overfitting occurs when a model captures noise rather than signal. Remedies include regularization (L2, dropout), early stopping, data augmentation, and simpler architectures.","metadata":{"topic":"generalization","level":"intro"}},
+        {"id":"ml-08","text":"Evaluation leakage happens when information from the test set influences model training or selection. Use strict train/validation/test splits, avoid peeking at the test set, and freeze hyperparameters before final evaluation.","metadata":{"topic":"best-practices","level":"advanced"}}
+      ]});
+
+      await post(`${BASE}/collections/kb-cloud/index`, { items: [
+        {"id":"cl-01","text":"In AWS, S3 is an object store with eventual consistency for overwrite and delete operations. Use versioning for safety and lifecycle policies to transition objects to Glacier for cost savings.","metadata":{"aws":"s3","type":"storage"}},
+        {"id":"cl-02","text":"EC2 spot instances are cheap but can be interrupted with a short notice. For fault tolerance, use Auto Scaling groups, multiple AZs, and checkpoint progress to EBS or S3.","metadata":{"aws":"ec2","type":"compute"}},
+        {"id":"cl-03","text":"IAM roles provide temporary credentials to services. Prefer roles over long-lived access keys. Grant least privilege and use permission boundaries to limit role power.","metadata":{"aws":"iam","type":"security"}},
+        {"id":"cl-04","text":"Within a VPC, security groups are stateful firewalls attached to ENIs, while NACLs are stateless and operate at the subnet level. Default deny on NACLs is common in locked-down environments.","metadata":{"aws":"vpc","type":"networking"}},
+        {"id":"cl-05","text":"RDS supports automated backups and point-in-time recovery. For read-heavy workloads, use read replicas. Multi-AZ improves availability by synchronous standby in another AZ.","metadata":{"aws":"rds","type":"database"}},
+        {"id":"cl-06","text":"CloudFront caches content at edge locations. Set appropriate cache-control headers and consider signed URLs for private content. Lambda@Edge can rewrite requests dynamically.","metadata":{"aws":"cloudfront","type":"cdn"}},
+        {"id":"cl-07","text":"SQS visibility timeout must exceed your consumer's processing time to avoid duplicate deliveries. Use dead-letter queues to isolate poison messages.","metadata":{"aws":"sqs","type":"messaging"}},
+        {"id":"cl-08","text":"DynamoDB partitions data by partition key. Choose a high-cardinality key to avoid hot partitions. On-demand capacity suits spiky traffic; provisioned with auto-scaling suits predictable loads.","metadata":{"aws":"dynamodb","type":"nosql"}}
+      ]});
+
+      await post(`${BASE}/collections/kb-python/index`, { items: [
+        {"id":"py-01","text":"List comprehensions are concise and faster than equivalent for-loops in CPython because they avoid repeated bytecode for method lookups. Prefer them for simple transformations and filters.","metadata":{"topic":"syntax","level":"intro"}},
+        {"id":"py-02","text":"Iterators produce elements lazily via __next__, while generators are a concise way to define iterators using yield. Generators reduce memory by streaming large sequences.","metadata":{"topic":"iterators","level":"intro"}},
+        {"id":"py-03","text":"Context managers ensure cleanup even when exceptions occur. Implement with with-statements or the contextlib.contextmanager decorator.","metadata":{"topic":"robustness","level":"intro"}},
+        {"id":"py-04","text":"The GIL prevents true parallelism for CPU-bound threads. Use multiprocessing for CPU tasks and asyncio or threads for I/O-bound concurrency.","metadata":{"topic":"concurrency","level":"intermediate"}},
+        {"id":"py-05","text":"Dataclasses generate init/eq/repr automatically and pair well with type hints. Pydantic adds validation and parsing but has runtime overhead compared to plain dataclasses.","metadata":{"topic":"typing","level":"intermediate"}},
+        {"id":"py-06","text":"Virtual environments isolate dependencies per project. Use python -m venv .venv and activate it; pin versions in requirements.txt or pyproject.toml.","metadata":{"topic":"packaging","level":"intro"}},
+        {"id":"py-07","text":"Asyncio uses an event loop with cooperative multitasking. Use await for non-blocking I/O and ensure CPU-bound work runs in an executor to avoid blocking the loop.","metadata":{"topic":"asyncio","level":"intermediate"}},
+        {"id":"py-08","text":"Profiling reveals bottlenecks: cProfile for function-level stats, time.perf_counter for micro-benchmarks, and line_profiler for hotspots.","metadata":{"topic":"performance","level":"intermediate"}}
+      ]});
+
+      setStatus("Seeded bigger demo ✅");
+      await loadSearchCollections();
+    }
+
+    // Load collections into the <select> so users can't search the wrong one.
+    async function loadSearchCollections(){
+      const r = await fetch(`${BASE}/collections`, { headers: headers() });
+      const list = await r.json().catch(() => []);
+      const sel = document.getElementById('cid');
+      sel.innerHTML = "";
+      for (const c of list) {
+        const opt = document.createElement('option');
+        opt.value = c.name;  // name is stable & readable; you could also use c.id
+        opt.textContent = `${c.name} (id:${c.id})`;
+        sel.appendChild(opt);
+      }
+      // Prefer kb-ml if present, else demo
+      const pref = ["kb-ml","kb-cloud","kb-python","demo"];
+      const pick = pref.find(p => [...sel.options].some(o => o.value === p));
+      if (pick) sel.value = pick;
+    }
+    document.addEventListener('DOMContentLoaded', loadSearchCollections);
+
+    // Perform a search and render the results.
+    async function run() {
+      const sel = document.getElementById('cid');
+      const cid = sel.value || "demo";
+      const body = { query: document.getElementById('q').value, top_k: parseInt(document.getElementById('k').value, 10) };
+      const r = await fetch(`${BASE}/collections/${encodeURIComponent(cid)}/search`, {
+        method: "POST", headers: headers(), body: JSON.stringify(body)
+      });
+      const text = await r.text();
+      let data; try { data = JSON.parse(text); } catch { data = { results: [] }; }
+      setStatus(`POST /collections/${cid}/search → ${r.status}  ${r.ok ? "" : text}`);
+      renderResults(data.results || []);
+    }
+
+    // Render an array of results into the page.
+    function renderResults(rows) {
+      const out = document.getElementById('results');
+      out.innerHTML = "";
+      if (!rows.length) { out.textContent = "No results."; return; }
+      rows.forEach((r, i) => {
+        const div = document.createElement('div');
+        div.innerHTML = `<strong>#${i + 1}</strong> — <span class="score">${(r.score ?? 0).toFixed(4)}</span>
+                         <div style="margin-top:6px">${escapeHtml(r.text)}</div>
+                         <div class="muted" style="margin-top:6px">${escapeHtml(JSON.stringify(r.metadata))}</div>`;
+        out.appendChild(div);
+      });
+    }
+
+    // Update the status line under the settings fieldset.
+    function setStatus(msg){ document.getElementById('status').textContent = msg; }
+
+    // Safely render arbitrary text into HTML (avoids breaking UI with special chars).
+    function escapeHtml(s){ return (s||"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  </script>
+</body>
+</html>

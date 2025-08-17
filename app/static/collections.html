@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Manage Collections</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- Night-mode styling -->
+  <style>
+    :root{--bg:#0b0f14;--panel:#141a22;--text:#e5eef8;--muted:#93a2b7;--border:#1f2a36;--accent:#4da3ff;--accent-2:#2d75c9;--danger:#ff5f56;--input:#0f1621;--code:#0d1420}
+    *{box-sizing:border-box}
+    body{margin:24px;max-width:1100px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;color:var(--text);background:radial-gradient(1200px 800px at 10% -10%,#0f1724 0%,var(--bg) 45%) fixed}
+    nav{margin-bottom:16px}
+    nav a{color:var(--text);opacity:.9;text-decoration:none;margin-right:14px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:linear-gradient(180deg,#1a2230,#121824)}
+    nav a:hover{opacity:1;border-color:#2a3950}
+    h1{margin:0 0 8px}
+    fieldset{border:1px solid var(--border);background:linear-gradient(180deg,#121a27,#0e1520);padding:16px;margin:12px 0;border-radius:12px}
+    legend{padding:0 6px;color:var(--muted)}
+    label{display:block;margin:8px 0 6px;font-size:13px;color:var(--muted)}
+    input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--input);color:var(--text);outline:none}
+    input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #4da3ff33}
+    button{padding:8px 12px;border-radius:10px;border:1px solid #2a3b54;background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#fff;cursor:pointer;font-weight:600}
+    button:hover{filter:brightness(1.05)}
+    .danger{background:linear-gradient(180deg,#ff6f66,#c83c35);border-color:#a23531}
+    table{border-collapse:separate;border-spacing:0;width:100%;margin-top:8px}
+    th,td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+    thead th{color:var(--muted);font-weight:600;background:#0e1622}
+    tbody tr:hover{background:#0f1826}
+    .muted{color:var(--muted);font-size:12px;margin-top:6px}
+    code{background:var(--code);color:var(--text);padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <!-- Simple navigation -->
+  <nav>
+    <a href="/">Search</a>
+    <a href="/collections.html">Manage collections</a>
+    <a href="/ui" target="_blank">Swagger UI</a>
+  </nav>
+
+  <h1>Manage Collections</h1>
+  <div class="muted">Backend: <code id="base"></code></div>
+
+  <!-- Settings: set the API key used for all requests on this page -->
+  <fieldset>
+    <legend>Settings</legend>
+    <label>API Key (X-API-Key)</label>
+    <input id="key" value="dev-key" />
+    <div class="muted" id="status"></div>
+  </fieldset>
+
+  <!-- Collections table -->
+  <fieldset>
+    <legend>Collections</legend>
+    <button onclick="loadCollections()">Load collections</button>
+    <table id="colls">
+      <thead>
+        <tr><th style="width:80px">ID</th><th style="width:220px">Name</th><th>Description</th><th style="width:210px">Actions</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </fieldset>
+
+  <!-- Items table and actions for selected collection -->
+  <fieldset>
+    <legend>Items of a collection</legend>
+    <label>Collection ID or Name</label>
+    <input id="cid" value="demo" />
+    <div style="margin:10px 0;">
+      <button onclick="loadItems()">Load items</button>
+      <button class="danger" onclick="deleteCollection()" title="Deletes collection and all its items">Delete collection</button>
+    </div>
+    <table id="items">
+      <thead><tr><th style="width:160px">Item ID</th><th>Text</th><th style="width:240px">Metadata</th><th style="width:120px">Actions</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </fieldset>
+
+  <script>
+    // Use same-origin API to avoid CORS.
+    const BASE = window.location.origin;
+    document.getElementById('base').textContent = BASE;
+
+    // Common helpers.
+    function headers(){ return {"Content-Type":"application/json","X-API-Key":document.getElementById('key').value.trim()}; }
+    function setStatus(m){ document.getElementById('status').textContent = m; }
+    function escapeHtml(s){ return (s||"").replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+    // Fetch and render the list of collections.
+    async function loadCollections(){
+      const r=await fetch(`${BASE}/collections`,{headers:headers()});
+      let text=await r.text(); let data=[]; try{ data=JSON.parse(text);}catch{}
+      setStatus(`GET /collections → ${r.status}${r.ok?"":(" — "+text)}`);
+      const tb=document.querySelector('#colls tbody'); tb.innerHTML="";
+      if(!Array.isArray(data) || data.length===0){
+        const tr=document.createElement('tr'); tr.innerHTML=`<td colspan="4"><em>No collections found. Create one on the Search page or via Swagger UI.</em></td>`;
+        tb.appendChild(tr); return;
+      }
+      data.forEach(c=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${c.id}</td><td>${c.name}</td><td>${escapeHtml(c.description||"")}</td>
+                      <td>
+                        <button onclick="useCollection('${c.name}')">Use</button>
+                        <button class="danger" onclick="deleteCollection('${c.name}')">Delete</button>
+                      </td>`;
+        tb.appendChild(tr);
+      });
+    }
+
+    // Set the selected collection for the items panel.
+    function useCollection(cid){ document.getElementById('cid').value = cid; }
+
+    // Fetch and render the items for the current collection.
+    async function loadItems(){
+      const cid = document.getElementById('cid').value.trim();
+      const r=await fetch(`${BASE}/collections/${encodeURIComponent(cid)}/items?limit=200`,{headers:headers()});
+      let text=await r.text(); let data={items:[]}; try{ data=JSON.parse(text);}catch{}
+      setStatus(`GET /collections/${cid}/items → ${r.status}${r.ok?"":(" — "+text)}`);
+      const tb=document.querySelector('#items tbody'); tb.innerHTML="";
+      if(!Array.isArray(data.items) || data.items.length===0){
+        const tr=document.createElement('tr'); tr.innerHTML=`<td colspan="4"><em>No items found.</em></td>`;
+        tb.appendChild(tr); return;
+      }
+      data.items.forEach(it=>{
+        const tr=document.createElement('tr');
+        tr.innerHTML=`<td>${it.id}</td>
+                      <td>${escapeHtml(it.text)}</td>
+                      <td><code>${escapeHtml(JSON.stringify(it.metadata))}</code></td>
+                      <td><button class="danger" onclick="deleteItem('${cid}','${it.id}')">Delete</button></td>`;
+        tb.appendChild(tr);
+      });
+    }
+
+    // Delete a collection (and cascade-delete its items).
+    async function deleteCollection(cidArg){
+      const cid = (cidArg ?? document.getElementById('cid').value.trim());
+      if(!cid) return;
+      if(!confirm(`Delete collection "${cid}" and all its items?`)) return;
+      const r=await fetch(`${BASE}/collections/${encodeURIComponent(cid)}`,{method:"DELETE",headers:headers()});
+      setStatus(`DELETE /collections/${cid} → ${r.status}`);
+      await loadCollections();
+      document.querySelector('#items tbody').innerHTML="";
+    }
+
+    // Delete a single item.
+    async function deleteItem(cid, itemId){
+      if(!confirm(`Delete item ${itemId}?`)) return;
+      const r=await fetch(`${BASE}/collections/${encodeURIComponent(cid)}/items/${encodeURIComponent(itemId)}`,{method:"DELETE",headers:headers()});
+      setStatus(`DELETE /collections/${cid}/items/${itemId} → ${r.status}`);
+      await loadItems();
+    }
+  </script>
+</body>
+</html>
