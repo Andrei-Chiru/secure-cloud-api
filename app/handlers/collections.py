@@ -1,156 +1,200 @@
 """
-Handlers for:
-- Healthcheck
-- Collections CRUD: list/get/create/delete
-- Items list/delete
-- Index/upsert items (computes embeddings)
+Collections & items handlers backed by BigQuery.
 """
 
-from sqlalchemy import select
+import json
 from connexion.exceptions import ProblemException
-from app.db import session_scope
-from app.models import Collection, Item
+from google.cloud import bigquery
+from app.db import bq, fq
 from sentence_transformers import SentenceTransformer
 
-# Load the embedding model once per process.
-# all-MiniLM-L6-v2 is fast (384-dim); normalize for cosine similarity.
+# Embedding model loaded once per process.
 _model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
 
 def _embed(texts: list[str]) -> list[list[float]]:
-    """
-    Encodes an array of strings into normalized embeddings (lists of float32).
-    Normalization makes cosine distance equivalent to dot-product ordering.
-    """
-    v = _model.encode(texts, normalize_embeddings=True)
-    return [row.astype("float32").tolist() for row in v]
+    vecs = _model.encode(texts, normalize_embeddings=True)
+    # Convert to Python float (float64) for BigQuery ARRAY<FLOAT64>
+    return [list(map(float, v)) for v in vecs]
 
 def healthz():
-    """ GET /healthz -> simple OK payload """
     return {"ok": True}
 
 # ---------- helpers ----------
 
-def _get_collection(s, cid: str) -> Collection | None:
+def _get_collection_row(client: bigquery.Client, cid: str):
+    q = f"""
+      SELECT id, name, description
+      FROM `{fq("collections")}`
+      WHERE name = @cid OR CAST(id AS STRING) = @cid
+      LIMIT 1
     """
-    Resolve collection by id (numeric string) OR by name (string).
-    """
-    if str(cid).isdigit():
-        coll = s.get(Collection, int(cid))
-        if coll:
-            return coll
-    return s.scalar(select(Collection).where(Collection.name == str(cid)))
+    job = client.query(
+        q,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("cid", "STRING", str(cid))]
+        ),
+    )
+    rows = list(job.result())
+    return rows[0] if rows else None
+
+def _get_next_collection_id(client: bigquery.Client) -> int:
+    q = f"SELECT COALESCE(MAX(id), 0) + 1 AS nid FROM `{fq('collections')}`"
+    rows = list(client.query(q).result())
+    return int(rows[0]["nid"]) if rows else 1
 
 # ---------- collections ----------
 
 def list_collections():
-    """ GET /collections -> list all collections """
-    with session_scope() as s:
-        rows = s.scalars(select(Collection).order_by(Collection.id)).all()
-        return [{"id": c.id, "name": c.name, "description": c.description} for c in rows]
+    client = bq()
+    q = f"SELECT id, name, description FROM `{fq('collections')}` ORDER BY id"
+    rows = list(client.query(q).result())
+    return [{"id": r["id"], "name": r["name"], "description": r["description"]} for r in rows]
 
 def get_collection(cid):
-    """ GET /collections/{cid} -> fetch one collection """
-    with session_scope() as s:
-        coll = _get_collection(s, cid)
-        if not coll:
-            raise ProblemException(404, "Not Found", f"Collection {cid} not found")
-        return {"id": coll.id, "name": coll.name, "description": coll.description}
+    client = bq()
+    row = _get_collection_row(client, cid)
+    if not row:
+        raise ProblemException(404, "Not Found", f"Collection {cid} not found")
+    return {"id": row["id"], "name": row["name"], "description": row["description"]}
 
 def create_collection(body):
-    """ POST /collections -> create a collection by name """
+    client = bq()
     name = body["name"].strip().lower().replace(" ", "-")
     desc = body.get("description")
-    with session_scope() as s:
-        exists = s.scalar(select(Collection).where(Collection.name == name))
-        if exists:
-            raise ProblemException(409, "Conflict", "Collection exists")
-        c = Collection(name=name, description=desc)
-        s.add(c)
-        s.flush()  # ensure c.id is populated
-        return {"id": c.id, "name": c.name}, 201
+
+    # Uniqueness check on name
+    existing = _get_collection_row(client, name)
+    if existing:
+        raise ProblemException(409, "Conflict", "Collection exists")
+
+    nid = _get_next_collection_id(client)
+    q = f"""
+      INSERT INTO `{fq('collections')}` (id, name, description)
+      VALUES (@id, @name, @desc)
+    """
+    params = [
+        bigquery.ScalarQueryParameter("id", "INT64", nid),
+        bigquery.ScalarQueryParameter("name", "STRING", name),
+        bigquery.ScalarQueryParameter("desc", "STRING", desc),
+    ]
+    client.query(q, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
+    return {"id": nid, "name": name}, 201
 
 def delete_collection(cid):
-    """ DELETE /collections/{cid} -> delete a collection and all its items """
-    with session_scope() as s:
-        coll = _get_collection(s, cid)
-        if not coll:
-            raise ProblemException(404, "Not Found", f"Collection {cid} not found")
-        s.delete(coll)  # cascades to items
-        return "", 204
+    client = bq()
+    row = _get_collection_row(client, cid)
+    if not row:
+        raise ProblemException(404, "Not Found", f"Collection {cid} not found")
+    coll_id = int(row["id"])
+
+    # Delete items first, then collection
+    client.query(
+        f"DELETE FROM `{fq('items')}` WHERE collection_id = @cid",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("cid", "INT64", coll_id)]
+        ),
+    ).result()
+    client.query(
+        f"DELETE FROM `{fq('collections')}` WHERE id = @cid",
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("cid", "INT64", coll_id)]
+        ),
+    ).result()
+    return "", 204
 
 # ---------- items ----------
 
 def list_items(cid, limit=50, offset=0):
-    """ GET /collections/{cid}/items -> list items in a collection (paginated) """
-    limit = max(1, min(int(limit), 500))
-    offset = max(0, int(offset))
-    with session_scope() as s:
-        coll = _get_collection(s, cid)
-        if not coll:
-            raise ProblemException(404, "Not Found", f"Collection {cid} not found")
-        q = (
-            select(Item)
-            .where(Item.collection_id == coll.id)
-            .order_by(Item.id)
-            .limit(limit)
-            .offset(offset)
-        )
-        rows = s.scalars(q).all()
-        return {
-            "collection": {"id": coll.id, "name": coll.name},
-            "items": [{"id": it.id, "text": it.text, "metadata": it.meta} for it in rows],
-            "limit": limit,
-            "offset": offset,
-        }
+    client = bq()
+    row = _get_collection_row(client, cid)
+    if not row:
+        raise ProblemException(404, "Not Found", f"Collection {cid} not found")
+    coll_id = int(row["id"])
+
+    q = f"""
+      SELECT id, text, metadata
+      FROM `{fq('items')}`
+      WHERE collection_id = @cid
+      ORDER BY id
+      LIMIT @lim OFFSET @off
+    """
+    params = [
+        bigquery.ScalarQueryParameter("cid", "INT64", coll_id),
+        bigquery.ScalarQueryParameter("lim", "INT64", int(max(1, min(int(limit), 500)))),
+        bigquery.ScalarQueryParameter("off", "INT64", int(max(0, int(offset)))),
+    ]
+    rows = list(bq().query(q, job_config=bigquery.QueryJobConfig(query_parameters=params)).result())
+    return {
+        "collection": {"id": coll_id, "name": row["name"]},
+        "items": [{"id": r["id"], "text": r["text"], "metadata": r["metadata"]} for r in rows],
+        "limit": int(limit),
+        "offset": int(offset),
+    }
 
 def delete_item(cid, item_id):
-    """ DELETE /collections/{cid}/items/{item_id} -> delete a single item """
-    with session_scope() as s:
-        coll = _get_collection(s, cid)
-        if not coll:
-            raise ProblemException(404, "Not Found", f"Collection {cid} not found")
-        row = s.get(Item, item_id)
-        if not row or row.collection_id != coll.id:
-            raise ProblemException(404, "Not Found", f"Item {item_id} not found in collection {cid}")
-        s.delete(row)
-        return "", 204
+    client = bq()
+    row = _get_collection_row(client, cid)
+    if not row:
+        raise ProblemException(404, "Not Found", f"Collection {cid} not found")
+    coll_id = int(row["id"])
+
+    q = f"DELETE FROM `{fq('items')}` WHERE id = @id AND collection_id = @cid"
+    params = [
+        bigquery.ScalarQueryParameter("id", "STRING", item_id),
+        bigquery.ScalarQueryParameter("cid", "INT64", coll_id),
+    ]
+    job = client.query(q, job_config=bigquery.QueryJobConfig(query_parameters=params))
+    result = job.result()
+    # If nothing deleted, treat as 404
+    if getattr(result, "num_dml_affected_rows", None) in (0, None):
+        raise ProblemException(404, "Not Found", f"Item {item_id} not found in collection {cid}")
+    return "", 204
 
 # ---------- indexing ----------
 
 def upsert_items(cid, body):
-    """
-    POST /collections/{cid}/index
-    Upsert an array of items and compute fresh embeddings.
-    - If an item id already exists, we update its text/metadata/embedding.
-    - Otherwise we insert a new row.
-    """
+    client = bq()
+    coll = _get_collection_row(client, cid)
+    if not coll:
+        raise ProblemException(404, "Not Found", f"Collection {cid} not found")
+    coll_id = int(coll["id"])
+
     items = body["items"]
     texts = [it["text"] for it in items]
     vecs = _embed(texts)
 
-    with session_scope() as s:
-        coll = _get_collection(s, cid)
-        if not coll:
-            raise ProblemException(404, "Not Found", f"Collection {cid} not found")
+    # Upsert one-by-one using MERGE (simple & clear for demo sizes)
+    merge_sql = f"""
+      MERGE `{fq('items')}` AS T
+      USING (
+        SELECT @id AS id,
+               @cid AS collection_id,
+               @text AS text,
+               @meta AS metadata,
+               @emb AS embedding
+      ) AS S
+      ON T.id = S.id
+      WHEN MATCHED THEN
+        UPDATE SET
+          collection_id = S.collection_id,
+          text          = S.text,
+          metadata      = S.metadata,
+          embedding     = S.embedding
+      WHEN NOT MATCHED THEN
+        INSERT (id, collection_id, text, metadata, embedding)
+        VALUES (S.id, S.collection_id, S.text, S.metadata, S.embedding)
+    """
 
-        for it, vec in zip(items, vecs):
-            row = s.get(Item, it["id"])
-            if row:
-                # Update existing item
-                row.text = it["text"]
-                row.meta = it.get("metadata")
-                row.embedding = vec
-                row.collection_id = coll.id
-            else:
-                # Insert new item
-                s.add(
-                    Item(
-                        id=it["id"],
-                        collection_id=coll.id,
-                        text=it["text"],
-                        meta=it.get("metadata"),
-                        embedding=vec,
-                    )
-                )
+    for it, emb in zip(items, vecs):
+        params = [
+            bigquery.ScalarQueryParameter("id", "STRING", it["id"]),
+            bigquery.ScalarQueryParameter("cid", "INT64", coll_id),
+            bigquery.ScalarQueryParameter("text", "STRING", it["text"]),
+            # JSON param: pass a JSON string
+            bigquery.ScalarQueryParameter("meta", "JSON", json.dumps(it.get("metadata")) if it.get("metadata") is not None else "null"),
+            # ARRAY<FLOAT64>
+            bigquery.ArrayQueryParameter("emb", "FLOAT64", emb),
+        ]
+        client.query(merge_sql, job_config=bigquery.QueryJobConfig(query_parameters=params)).result()
 
     return {"count": len(items)}

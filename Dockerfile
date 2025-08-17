@@ -1,20 +1,30 @@
-# Use a PyTorch CPU base image so sentence-transformers installs smoothly without heavy build steps.
-FROM pytorch/pytorch:2.2.2-cpu-py3.11
+# Slim Python base; small and reliable
+FROM python:3.11-slim-bookworm
 
-# All code lives under /app
+# Faster, cleaner installs & logs
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+# System deps that some wheels/tools want (git optional but handy)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
-# Keep pip modern to avoid resolver quirks.
-RUN pip install --no-cache-dir --upgrade pip
+# 1) Install CPU-only PyTorch explicitly from the official index
+#    (keep torch OUT of requirements.txt to avoid conflicts)
+RUN python -m pip install --upgrade pip \
+ && python -m pip install --no-cache-dir \
+      --index-url https://download.pytorch.org/whl/cpu \
+      torch==2.2.2
 
-# Install Python dependencies first to leverage Docker layer caching.
+# 2) Install the rest of the deps
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
-# Now copy the rest of the project files.
+# 3) Copy the app
 COPY . .
 
-# Avoids Python buffering logs; makes container logs timely.
-ENV PYTHONUNBUFFERED=1
-
-# We specify the gunicorn command in docker-compose.yml so we can tweak workers easily there.
+# Entrypoint comes from docker-compose.yml (gunicorn)

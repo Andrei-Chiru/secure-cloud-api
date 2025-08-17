@@ -1,0 +1,33 @@
+# Never bake secrets into images
+secrets/
+.env
+.env.*
+*service-account*.json
+*sa*.json
+*_sa.json
+credentials*.json
+auth*.json
+
+# Git metadata
+.git
+.gitignore
+
+# Python / build artifacts
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

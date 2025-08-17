@@ -1,16 +1,11 @@
-# Connexion (OpenAPI-first) with Swagger UI for interactive docs
 connexion[swagger-ui]==2.14.2
-Flask==2.3.3
-
-# ORM and drivers
-SQLAlchemy==2.0.32
-psycopg2-binary==2.9.9
-pgvector==0.2.5
-
-# ML bits: sentence embeddings
-torch==2.2.2
-sentence-transformers==2.2.2
+Flask==2.2.5
+google-cloud-bigquery==3.25.0
+google-auth==2.33.0
+# upgrade ST; keep transformers recent
+sentence-transformers==3.0.1
+transformers==4.44.2
 numpy==1.26.4
-
-# Prod server
+# with latest hub (implicit) OR pin explicitly:
+huggingface_hub==0.25.2
 gunicorn==21.2.0

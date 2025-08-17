@@ -1,2 +1,80 @@
+# --- SECRETS / CREDENTIALS (MOST IMPORTANT) ---
+# Keep service account keys and any secret files out of git
+secrets/
+*.key
+*.pem
+*.p12
+*.crt
+*.enc
+*.jks
+*service-account*.json
+*sa*.json
+*_sa.json
+*.creds.json
+credentials*.json
+auth*.json
+
+# Env files often hold API keys / DB URLs
 .env
-.env.example
+.env.*
+.envrc
+
+# If you ever stored OAuth tokens locally in repo (try not to)
+tokens/
+*.token
+*.oauth
+
+# --- DOCKER / COMPOSE ---
+# Local overrides can contain credentials
+docker-compose.override.yml
+docker-compose.override.*.yml
+
+# Build output & intermediate junk
+*.pid
+*.log
+
+# --- PYTHON ---
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+
+# Virtualenvs
+.venv/
+venv/
+ENV/
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Test / tooling caches
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.pyre/
+.dmypy.json
+
+# --- EDITORS / OS ---
+# VS Code / JetBrains
+.vscode/
+.idea/
+*.code-workspace
+
+# macOS / Windows cruft
+.DS_Store
+Thumbs.db
+
+# --- DATA / MISC (if you create local scratch data) ---
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.tmp
+*.swp

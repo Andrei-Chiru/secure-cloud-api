@@ -38,7 +38,7 @@
   <h1>Embed & Search</h1>
   <div class="muted">Backend: <code id="base"></code></div>
 
-  <!-- Settings: API key and collection selector -->
+  <!-- Settings: API key and collection input -->
   <fieldset>
     <legend>Settings</legend>
     <div class="row">
@@ -47,11 +47,8 @@
         <input id="key" value="dev-key" />
       </div>
       <div>
-        <label>Collection</label>
-        <div class="row">
-          <select id="cid"></select>
-          <button type="button" onclick="loadSearchCollections()">Load collections</button>
-        </div>
+        <label>Collection (name or numeric id)</label>
+        <input id="cid" value="demo" placeholder="e.g., demo or kb-ml" />
       </div>
     </div>
     <div class="row" style="margin-top:8px">
@@ -92,21 +89,19 @@
       setStatus(`/healthz → ${r.status}`);
     }
 
-    // Create a collection whose name matches the currently selected/typed option.
+    // Create a collection using the text from the input field.
     async function createCollection() {
-      const sel = document.getElementById('cid');
-      const name = sel.value || "demo";
+      const name = (document.getElementById('cid').value || "demo").trim();
       const r = await fetch(`${BASE}/collections`, {
         method: "POST", headers: headers(),
         body: JSON.stringify({ name, description: "demo collection" })
       });
       setStatus(`POST /collections → ${r.status}`);
-      await loadSearchCollections();
     }
 
     // Tiny 3-item demo to prove end-to-end behavior.
     async function seed() {
-      const cid = document.getElementById('cid').value || "demo";
+      const cid = (document.getElementById('cid').value || "demo").trim();
       const items = [
         { id: "1", text: "Paris is the capital of France", metadata: { tag: "geo" } },
         { id: "2", text: "The Eiffel Tower is in Paris", metadata: { tag: "landmark" } },
@@ -168,32 +163,11 @@
       ]});
 
       setStatus("Seeded bigger demo ✅");
-      await loadSearchCollections();
     }
-
-    // Load collections into the <select> so users can't search the wrong one.
-    async function loadSearchCollections(){
-      const r = await fetch(`${BASE}/collections`, { headers: headers() });
-      const list = await r.json().catch(() => []);
-      const sel = document.getElementById('cid');
-      sel.innerHTML = "";
-      for (const c of list) {
-        const opt = document.createElement('option');
-        opt.value = c.name;  // name is stable & readable; you could also use c.id
-        opt.textContent = `${c.name} (id:${c.id})`;
-        sel.appendChild(opt);
-      }
-      // Prefer kb-ml if present, else demo
-      const pref = ["kb-ml","kb-cloud","kb-python","demo"];
-      const pick = pref.find(p => [...sel.options].some(o => o.value === p));
-      if (pick) sel.value = pick;
-    }
-    document.addEventListener('DOMContentLoaded', loadSearchCollections);
 
     // Perform a search and render the results.
     async function run() {
-      const sel = document.getElementById('cid');
-      const cid = sel.value || "demo";
+      const cid = (document.getElementById('cid').value || "demo").trim();
       const body = { query: document.getElementById('q').value, top_k: parseInt(document.getElementById('k').value, 10) };
       const r = await fetch(`${BASE}/collections/${encodeURIComponent(cid)}/search`, {
         method: "POST", headers: headers(), body: JSON.stringify(body)
