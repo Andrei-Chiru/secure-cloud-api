@@ -86,6 +86,7 @@ def search(cid: str, body: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     """
     # Read parameters with a simple default for top_k.
     top_k = int(body.get("top_k", 5))
+    top_k = max(1, min(int(body.get("top_k", 5)), 50))
 
     # Compute normalized query embedding (unit vector).
     qv = _embed_one(body["query"])

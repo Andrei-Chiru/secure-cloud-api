@@ -438,6 +438,33 @@
 
     // On first load, show the existing collections (useful on Cloud Run)
     document.addEventListener('DOMContentLoaded', listCollections);
+    // Read key from cookie or URL and keep it in a cookie; remove it from the URL for safety.
+    function getCookie(name){
+      return document.cookie.split('; ').find(r => r.startsWith(name+'='))?.split('=')[1];
+    }
+    function setCookie(name, value){
+      // non-HttpOnly because the page needs to read it; secure + samesite for safety
+      document.cookie = `${name}=${value}; path=/; secure; samesite=Strict; max-age=2592000`; // 30 days
+    }
+    function adoptKeyFromUrl() {
+      const url = new URL(window.location.href);
+      const fromUrl = url.searchParams.get('key');
+      if (fromUrl) {
+        setCookie('x_api_key', fromUrl);
+        url.searchParams.delete('key');
+        window.history.replaceState({}, "", url.toString()); // cleans the visible URL
+      }
+    }
+    function populateKeyInput() {
+      const existing = getCookie('x_api_key');
+      if (existing) document.getElementById('key').value = existing;
+    }
+    document.addEventListener('DOMContentLoaded', () => {
+      adoptKeyFromUrl();
+      populateKeyInput();
+      // keep cookie up to date as the user edits the key
+      document.getElementById('key').addEventListener('change', e => setCookie('x_api_key', e.target.value.trim()));
+    });
   </script>
 </body>
 </html>

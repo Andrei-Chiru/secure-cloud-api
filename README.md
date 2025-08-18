@@ -21,7 +21,7 @@ A minimal API service that:
 - `POST /collections/{cid}/search` → semantic search  
   body: `{ "query": "…", "top_k": 5 }`
 
-> See `/ui` (Swagger UI) for the full contract. The `/healthz` route was removed.
+> See `/ui` (Swagger UI) for the full contract.
 
 ## Manual demo (UI)
 1. Open the app root (e.g. `http://localhost:8000/` or your Cloud Run URL).
