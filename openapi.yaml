@@ -8,12 +8,12 @@ servers:
 components:
   securitySchemes:
     ApiKeyAuth:
-      # Simple header-based API key auth
       type: apiKey
       in: header
       name: X-API-Key
-      # Connexion hook to validate token
-      x-apikeyInfoFunc: app.security.check_api_key
+      # Tell Connexion which Python function validates this scheme:
+      x-apikeyInfoFunc: app.auth.verify_api_key
+
 
   schemas:
     # Request schema to create a collection
@@ -46,6 +46,9 @@ components:
       properties:
         query: { type: string }
         top_k: { type: integer, default: 5, minimum: 1, maximum: 50 }
+
+security:
+  - ApiKeyAuth: []   # Require the API key for all operations by default
 
 paths:
   # -------- Collections CRUD --------
