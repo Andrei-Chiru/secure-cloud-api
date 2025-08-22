@@ -46,3 +46,13 @@ curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
 curl -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
   -d '{"query":"French capital city","top_k":3}' \
   $API/collections/demo/search
+```
+## Needed in project:
+```
+secrets/key.json
+```
+- needs to have type, project_id, private_key_id, private_key, client_email, client_id, auth_url, token_uri,auth_provider_x509_cert_url, client_x509_cert_url, universe_domain
+```
+.env
+```
+- needs to have GOOGLE_CLOUD_PROJECT, BQ_DATASET, BQ_LOCATION, API_KEY, GOOGLE_APPLICATION_CREDENTIALS, REGION, REPO, SERVICE, SA_NAME
